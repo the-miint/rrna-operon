@@ -11,3 +11,6 @@ CREATE OR REPLACE TABLE reads AS
 SELECT r.*
 FROM reads_unfiltered r
 SEMI JOIN sortmerna_hits h USING (read_id);
+
+DROP TABLE IF EXISTS sortmerna_hits;
+DROP VIEW IF EXISTS reads_for_sortmerna;
