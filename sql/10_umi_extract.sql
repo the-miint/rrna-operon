@@ -1,23 +1,36 @@
--- Stage 3 (combine): merge fwd/rev extractions into umi_candidates
+-- Stage 2: extract terminal subsequences
+CREATE OR REPLACE TABLE read_ends AS
+SELECT
+    read_id,
+    substr(seq, 1, least(200, length(seq)))              AS start_seq,
+    qual[1:least(200, length(qual))]                     AS start_qual,
+    substr(seq, greatest(1, length(seq) - 199))          AS end_seq,
+    qual[greatest(1, length(qual) - 199):]               AS end_qual
+FROM reads;
+
+-- Stage 3: extract canonical UMI candidates (both strands)
 CREATE OR REPLACE TABLE umi_candidates AS
 WITH fwd AS (
-    SELECT a.read_id, '+' AS strand, a.u1, b.u2
-    FROM _fwd_u1 a JOIN _fwd_u2 b USING (read_id)
+    SELECT read_id, '+' AS strand,
+           (extract_linked_amplicon(start_seq, start_qual,
+               getvariable('fw1'), getvariable('fw2'), 18, 18, 0.10)).sequence AS u1,
+           (extract_linked_amplicon(end_seq, end_qual,
+               getvariable('rv2_rc'), getvariable('rv1_rc'), 18, 18, 0.10)).sequence AS u2
+    FROM read_ends
 ),
 rev AS (
-    SELECT a.read_id, '-' AS strand, a.u1, b.u2
-    FROM _rev_u1 a JOIN _rev_u2 b USING (read_id)
+    SELECT read_id, '-' AS strand,
+           (extract_linked_amplicon(start_seq, start_qual,
+               getvariable('rv1'), getvariable('rv2'), 18, 18, 0.10)).sequence AS u1,
+           (extract_linked_amplicon(end_seq, end_qual,
+               getvariable('fw2_rc'), getvariable('fw1_rc'), 18, 18, 0.10)).sequence AS u2
+    FROM read_ends
 )
 SELECT read_id, strand, u1, u2, u1 || u2 AS umi_pair
 FROM (SELECT * FROM fwd UNION ALL SELECT * FROM rev)
-WHERE u1 IS NOT NULL AND u1 != ''
-  AND u2 IS NOT NULL AND u2 != ''
+WHERE u1 IS NOT NULL
+  AND u2 IS NOT NULL
   AND regexp_matches(u1 || u2, getvariable('umi_pair_pattern'));
-
-DROP TABLE IF EXISTS _fwd_u1;
-DROP TABLE IF EXISTS _fwd_u2;
-DROP TABLE IF EXISTS _rev_u1;
-DROP TABLE IF EXISTS _rev_u2;
 
 -- Stage 4: dereplicate + cluster UMI pairs
 CREATE OR REPLACE TABLE umi_unique AS
