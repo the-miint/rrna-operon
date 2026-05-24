@@ -159,10 +159,17 @@ fi
 echo "Phase 6: Export (50_export.sql)"
 if [[ -f "${PROJECT_DIR}/sql/50_export.sql" ]]; then
     run_phase "${PROJECT_DIR}/sql/50_export.sql"
+    "$DUCKDB" "$DB" <<EOF
+COPY export_consensus TO '${WORKDIR}/consensus.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY export_consensus_fasta TO '${WORKDIR}/consensus.fa' (FORMAT FASTA);
+COPY export_variants TO '${WORKDIR}/variants.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY export_variants_fasta TO '${WORKDIR}/variants.fa' (FORMAT FASTA);
+EOF
     assert_file_exists "consensus.parquet" "${WORKDIR}/consensus.parquet"
-    assert_file_exists "variants.parquet" "${WORKDIR}/variants.parquet"
     assert_file_exists "consensus.fa" "${WORKDIR}/consensus.fa"
-    assert_file_exists "variants.fa" "${WORKDIR}/variants.fa"
+    assert_file_exists "variants.parquet" "${WORKDIR}/variants.parquet"
+    assert_ge "consensus parquet rows" "1" \
+        "$("$DUCKDB" -csv -noheader :memory: "SELECT count(*) FROM read_parquet('${WORKDIR}/consensus.parquet')" | tr -d '[:space:]')"
 else
     echo "  SKIP: not yet implemented"
 fi

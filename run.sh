@@ -82,6 +82,14 @@ for sql_file in "${SCRIPT_DIR}"/sql/[0-9]*.sql; do
     run_phase "$sql_file"
 done
 
+echo "--- export ---"
+"$DUCKDB" "$DB" <<EOF
+COPY export_consensus TO '${OUTPUT_DIR}/consensus.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY export_consensus_fasta TO '${OUTPUT_DIR}/consensus.fa' (FORMAT FASTA);
+COPY export_variants TO '${OUTPUT_DIR}/variants.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY export_variants_fasta TO '${OUTPUT_DIR}/variants.fa' (FORMAT FASTA);
+EOF
+
 echo
 echo "=== Done ==="
 echo "Outputs in: $OUTPUT_DIR"
