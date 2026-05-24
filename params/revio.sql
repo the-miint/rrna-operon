@@ -17,3 +17,6 @@ SET VARIABLE umi_coverage_min    = 5;
 SET VARIABLE subcluster_id       = 0.998;
 SET VARIABLE variant_min_support = 2;
 SET VARIABLE snp_min_alt_depth   = 2;
+-- positive_ref_path: path to 16S reference FASTA for sortmerna filter
+-- download from ftp.microbio.me (88_otus.fasta, same as deblur)
+-- SET VARIABLE positive_ref_path = '/path/to/88_otus.fasta';
