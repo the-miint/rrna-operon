@@ -63,7 +63,12 @@ run_phase() {
     local phase_name
     phase_name="$(basename "$sql_file" .sql)"
     echo "--- ${phase_name} ---"
-    "$DUCKDB" "$DB" ".read ${sql_file}"
+    "$DUCKDB" "$DB" <<EOF
+${INPUT_SQL}
+SET VARIABLE output_dir = '${OUTPUT_DIR}';
+.read ${PARAMS}
+.read ${sql_file}
+EOF
 }
 
 echo "=== rrna-operon pipeline ==="
@@ -72,10 +77,6 @@ echo "Params: $PARAMS"
 echo "Output: $OUTPUT_DIR"
 echo "DB:     $DB"
 echo
-
-"$DUCKDB" "$DB" "$INPUT_SQL"
-"$DUCKDB" "$DB" "SET VARIABLE output_dir = '${OUTPUT_DIR}';"
-"$DUCKDB" "$DB" ".read ${PARAMS}"
 
 for sql_file in "${SCRIPT_DIR}"/sql/[0-9]*.sql; do
     run_phase "$sql_file"

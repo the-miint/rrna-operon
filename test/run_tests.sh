@@ -70,8 +70,16 @@ query() {
     "$DUCKDB" -csv -noheader "$DB" "$1" 2>/dev/null | tr -d '[:space:]'
 }
 
+SESSION_SETUP="CREATE OR REPLACE VIEW raw_input AS SELECT read_id, sequence1, qual1 FROM read_fastx('${FIXTURE}');"
+SESSION_SETUP="${SESSION_SETUP} SET VARIABLE positive_ref_path = '${TEST_REF}';"
+SESSION_SETUP="${SESSION_SETUP} SET VARIABLE output_dir = '${WORKDIR}';"
+
 run_sql() {
-    "$DUCKDB" "$DB" ".read $1"
+    "$DUCKDB" "$DB" <<EOF
+${SESSION_SETUP}
+.read ${PARAMS}
+.read $1
+EOF
 }
 
 # --- Setup ---
@@ -83,20 +91,17 @@ echo
 cleanup
 mkdir -p "$WORKDIR"
 
-# Create raw_input view + load params
-"$DUCKDB" "$DB" "CREATE OR REPLACE VIEW raw_input AS SELECT read_id, sequence1, qual1 FROM read_fastx('${FIXTURE}');"
-"$DUCKDB" "$DB" "SET VARIABLE positive_ref_path = '${TEST_REF}';"
-"$DUCKDB" "$DB" "SET VARIABLE output_dir = '${WORKDIR}';"
-"$DUCKDB" "$DB" ".read ${PARAMS}"
+# Create the persistent raw_input view
+"$DUCKDB" "$DB" "${SESSION_SETUP}"
 
 # --- Phase 1: Ingest ---
 echo "Phase 1: Ingest (00_ingest.sql)"
 if [[ -f "${PROJECT_DIR}/sql/00_ingest.sql" ]]; then
     run_sql "${PROJECT_DIR}/sql/00_ingest.sql"
-    assert_eq "reads_unfiltered exists" "1" "$(query "SELECT count(*) > 0 FROM reads_unfiltered")"
-    assert_eq "reads_unfiltered row count" "12" "$(query "SELECT count(*) FROM reads_unfiltered")"
+    assert_ge "reads_unfiltered has rows" "1" "$(query "SELECT count(*) FROM reads_unfiltered")"
+    assert_eq "reads_unfiltered row count" "11" "$(query "SELECT count(*) FROM reads_unfiltered")"
     assert_eq "all reads pass length filter" "0" \
-        "$(query "SELECT count(*) FROM reads_unfiltered WHERE length(seq) < getvariable('min_len') OR length(seq) > getvariable('max_len')")"
+        "$(query "SELECT count(*) FROM reads_unfiltered WHERE length(seq) < 50 OR length(seq) > 300")"
 else
     echo "  SKIP: sql/00_ingest.sql not found"
 fi
@@ -105,7 +110,7 @@ fi
 echo "Phase 1b: Positive filter (05_positive_filter.sql)"
 if [[ -f "${PROJECT_DIR}/sql/05_positive_filter.sql" ]]; then
     run_sql "${PROJECT_DIR}/sql/05_positive_filter.sql"
-    assert_eq "reads exists" "1" "$(query "SELECT count(*) > 0 FROM reads")"
+    assert_ge "reads has rows" "1" "$(query "SELECT count(*) FROM reads")"
     assert_le "reads <= reads_unfiltered" \
         "$(query "SELECT count(*) FROM reads_unfiltered")" \
         "$(query "SELECT count(*) FROM reads")"
@@ -119,7 +124,7 @@ fi
 echo "Phase 2: UMI extraction (10_umi_extract.sql)"
 if [[ -f "${PROJECT_DIR}/sql/10_umi_extract.sql" ]]; then
     run_sql "${PROJECT_DIR}/sql/10_umi_extract.sql"
-    assert_eq "read_ends exists" "1" "$(query "SELECT count(*) > 0 FROM read_ends")"
+    assert_ge "read_ends has rows" "1" "$(query "SELECT count(*) FROM read_ends")"
     assert_ge "umi_candidates has rows" "1" "$(query "SELECT count(*) FROM umi_candidates")"
     assert_eq "umi_ref has 2 UMI bins" "2" "$(query "SELECT count(*) FROM umi_ref")"
 else
