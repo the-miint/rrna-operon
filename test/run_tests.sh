@@ -148,7 +148,9 @@ fi
 echo "Phase 5: Variants (40_variants.sql)"
 if [[ -f "${PROJECT_DIR}/sql/40_variants.sql" ]]; then
     run_phase "${PROJECT_DIR}/sql/40_variants.sql"
-    assert_ge "variants has rows" "1" "$(query "SELECT count(*) FROM variants")"
+    assert_ge "hp_masked has rows" "1" "$(query "SELECT count(*) FROM hp_masked")"
+    # variants may be empty with few UMI bins (no multi-member clusters)
+    assert_eq "variants table exists" "0" "$(query "SELECT count(*) FROM variants WHERE false")"
 else
     echo "  SKIP: not yet implemented"
 fi
