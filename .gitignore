@@ -1,0 +1,4 @@
+*.duckdb
+*.duckdb.wal
+test/workdir/
+output/
