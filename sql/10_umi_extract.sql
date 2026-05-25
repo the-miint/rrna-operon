@@ -26,7 +26,10 @@ rev AS (
                getvariable('fw2_rc'), getvariable('fw1_rc'), 18, 18, 0.10)).sequence AS u2
     FROM read_ends
 )
-SELECT read_id, strand, u1, u2, u1 || u2 AS umi_pair
+SELECT read_id, strand, u1, u2,
+       CASE WHEN strand = '+' THEN u1 || u2
+            ELSE sequence_dna_reverse_complement(u1 || u2)
+       END AS umi_pair
 FROM (SELECT * FROM fwd UNION ALL SELECT * FROM rev)
 WHERE u1 IS NOT NULL
   AND u2 IS NOT NULL
@@ -48,7 +51,7 @@ ORDER BY size_in DESC;
 CREATE OR REPLACE TABLE umi_clusters AS
 SELECT read_id, is_centroid, centroid_id, identity
 FROM cluster_sequences_vsearch('umi_unique_for_cluster',
-     id := getvariable('umi_cluster_id'), strand := 'both');
+     id := getvariable('umi_cluster_id'), strand := 'plus');
 
 -- Stage 5: chimera filter (each 18-mer half + RC must be owned by this UMI)
 CREATE OR REPLACE TABLE umi_halves AS

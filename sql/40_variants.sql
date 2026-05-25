@@ -39,10 +39,6 @@ SELECT c2.centroid_id AS cluster_id, c1.read_id AS bin_id
 FROM clust1 c1
 JOIN clust2 c2 ON c1.centroid_id = c2.read_id;
 
--- Empty variants table (populated below if multi-member clusters exist)
+-- Empty variants table (stages 14-17 populate if multi-member clusters exist)
 CREATE OR REPLACE TABLE variants(variant_id VARCHAR, support BIGINT,
                                   seq VARCHAR, qual UTINYINT[]);
-
--- Stages 14-17 require multi-member clusters. With few UMI bins or very
--- divergent amplicons, all clusters are singletons and variant calling
--- is not possible. The variants table stays empty in that case.
