@@ -2,3 +2,4 @@
 *.duckdb.wal
 test/workdir/
 output/
+output_ecoli_2ng/
