@@ -39,6 +39,9 @@ SELECT c2.centroid_id AS cluster_id, c1.read_id AS bin_id
 FROM clust1 c1
 JOIN clust2 c2 ON c1.centroid_id = c2.read_id;
 
--- Empty variants table (stages 14-17 populate if multi-member clusters exist)
+-- Empty tables (stages 14-17 populate if multi-member clusters exist)
+CREATE OR REPLACE TABLE variant_bins(cluster_id VARCHAR, signature VARCHAR,
+                                      support BIGINT, variant_id VARCHAR,
+                                      read_ids VARCHAR[]);
 CREATE OR REPLACE TABLE variants(variant_id VARCHAR, support BIGINT,
                                   seq VARCHAR, qual UTINYINT[]);
