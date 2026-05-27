@@ -81,7 +81,7 @@ FROM variant_bins vb, unnest(vb.read_ids) AS u(read_id_in)
 JOIN high_cov_consensus h ON h.bin_id = u.read_id_in;
 
 CREATE OR REPLACE TABLE variant_msa AS
-SELECT * FROM align_mafft('variant_reads', sample_id := 'variant_id');
+SELECT * FROM align_abpoa('variant_reads', sample_id := 'variant_id');
 
 CREATE OR REPLACE TABLE variants AS
 SELECT m.variant_id,

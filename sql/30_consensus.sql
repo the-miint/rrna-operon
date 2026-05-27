@@ -8,7 +8,7 @@ SELECT bin_id, read_id,
 FROM bin_reads;
 
 CREATE OR REPLACE TABLE msa_out AS
-SELECT * FROM align_mafft('mafft_input', sample_id := 'bin_id');
+SELECT * FROM align_abpoa('mafft_input', sample_id := 'bin_id');
 
 -- Join MAFFT aligned_sequence back to oriented qual, aggregate per bin
 CREATE OR REPLACE TABLE bin_consensus AS
