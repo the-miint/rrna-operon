@@ -112,7 +112,6 @@ COPY export_consensus_fasta TO '${OUTPUT_DIR}/consensus.fa' (FORMAT FASTA);
 COPY export_variants TO '${OUTPUT_DIR}/variants.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
 COPY export_variants_fasta TO '${OUTPUT_DIR}/variants.fa' (FORMAT FASTA);
 COPY export_unique TO '${OUTPUT_DIR}/unique.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
-COPY export_unique_fasta TO '${OUTPUT_DIR}/unique.fa' (FORMAT FASTA);
 EOF
 
 echo
