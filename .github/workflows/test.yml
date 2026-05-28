@@ -60,14 +60,14 @@ jobs:
           DUCKDB="${GITHUB_WORKSPACE}/.duckdb-bin/duckdb" \
             ./test/run_tests.sh
 
-      - name: Smoke-test cleanup stage on test DB
+      - name: Smoke-test retained-table export
         run: |
           DUCKDB="${GITHUB_WORKSPACE}/.duckdb-bin/duckdb"
           "$DUCKDB" -unsigned -cmd "LOAD miint;" test/workdir/test.duckdb <<'SQL'
-          SET VARIABLE drop_per_read = true;
-          .read sql/99_cleanup.sql
+          COPY umi_ref         TO 'test/workdir/umi_ref.parquet'         (FORMAT PARQUET, COMPRESSION 'zstd');
+          COPY bin_pass        TO 'test/workdir/bin_pass.parquet'        (FORMAT PARQUET, COMPRESSION 'zstd');
+          COPY cluster_members TO 'test/workdir/cluster_members.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
           SQL
-          # Verify essential tables survived cleanup
-          "$DUCKDB" -unsigned -cmd "LOAD miint;" -csv -noheader \
-            test/workdir/test.duckdb \
-            "SELECT count(*) FROM high_cov_consensus" | grep -q '^[1-9]'
+          for f in umi_ref bin_pass cluster_members; do
+              test -s "test/workdir/${f}.parquet" || { echo "Missing/empty: ${f}.parquet" >&2; exit 1; }
+          done

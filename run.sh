@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DUCKDB="${DUCKDB:-${SCRIPT_DIR}/../duckdb-miint/build/release/duckdb}"
 PARAMS=""
 OUTPUT_DIR=""
-CLEANUP="none"
+KEEP_DB="false"
 
 # Load the miint extension at the start of every duckdb session. -unsigned
 # is required when miint was installed from a non-default repository
@@ -14,17 +14,14 @@ CLEANUP="none"
 duckdb() { "$DUCKDB" -unsigned -cmd "LOAD miint;" "$@"; }
 
 usage() {
-    echo "Usage: $0 [--params FILE] [--output DIR] [--duckdb PATH] [--cleanup MODE] INPUT"
+    echo "Usage: $0 [--params FILE] [--output DIR] [--duckdb PATH] [--keep-db] INPUT"
     echo
     echo "  INPUT             fastq(.gz) or parquet file"
     echo "  --params          parameter file (default: params/revio.sql)"
     echo "  --output          output directory (default: ./output)"
     echo "  --duckdb          path to duckdb binary"
-    echo "  --cleanup MODE    post-run DB pruning. MODE is one of:"
-    echo "                      none        keep all tables (default)"
-    echo "                      safe        drop pure-intermediate tables only"
-    echo "                      aggressive  also drop per-read tables (reads,"
-    echo "                                  reads_unfiltered, bin_reads)"
+    echo "  --keep-db         keep pipeline.duckdb after the run (default:"
+    echo "                    export retained tables to parquet and delete it)"
     exit 1
 }
 
@@ -33,17 +30,12 @@ while [[ $# -gt 0 ]]; do
         --params)  PARAMS="$2"; shift 2 ;;
         --output)  OUTPUT_DIR="$2"; shift 2 ;;
         --duckdb)  DUCKDB="$2"; shift 2 ;;
-        --cleanup) CLEANUP="$2"; shift 2 ;;
+        --keep-db) KEEP_DB="true"; shift ;;
         -h|--help) usage ;;
         -*)        echo "Unknown option: $1"; usage ;;
         *)         INPUT="$1"; shift ;;
     esac
 done
-
-case "$CLEANUP" in
-    none|safe|aggressive) ;;
-    *) echo "Error: --cleanup must be one of: none, safe, aggressive"; exit 1 ;;
-esac
 
 if [[ -z "${INPUT:-}" ]]; then
     echo "Error: INPUT file required"
@@ -99,9 +91,6 @@ echo "DB:     $DB"
 echo
 
 for sql_file in "${SCRIPT_DIR}"/sql/[0-9]*.sql; do
-    if [[ "$(basename "$sql_file")" == "99_cleanup.sql" ]]; then
-        continue   # cleanup runs after the export step
-    fi
     if [[ "$(basename "$sql_file")" == "45_variant_calling.sql" ]]; then
         has_multi=$(duckdb "$DB" -noheader -list "SELECT count(*) FROM (SELECT cluster_id FROM cluster_members GROUP BY 1 HAVING count(*) > 1);" 2>/dev/null)
         if [[ "${has_multi:-0}" -gt 0 ]]; then
@@ -126,24 +115,34 @@ EOF
     run_phase "$sql_file"
 done
 
+# ── Outputs ───────────────────────────────────────────────────────────────
+# Two layers:
+#   1. Sequence outputs (always produced): consensus/variants/unique as
+#      Parquet + FASTA — what most downstream tools want.
+#   2. Provenance/QC tables: UMI bin definitions, bin QC stats, bin→cluster
+#      mapping, and the variant→bin manifest. Together they let you
+#      reconstruct what was clustered with what, re-derive variants at
+#      different thresholds, and audit bin-level rejections — without
+#      keeping the multi-gigabyte intermediate database.
 echo "--- export ---"
+t0=$SECONDS
 duckdb "$DB" <<EOF
-COPY export_consensus TO '${OUTPUT_DIR}/consensus.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
-COPY export_consensus_fasta TO '${OUTPUT_DIR}/consensus.fa' (FORMAT FASTA);
-COPY export_variants TO '${OUTPUT_DIR}/variants.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
-COPY export_variants_fasta TO '${OUTPUT_DIR}/variants.fa' (FORMAT FASTA);
-COPY export_unique TO '${OUTPUT_DIR}/unique.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY export_consensus      TO '${OUTPUT_DIR}/consensus.parquet'      (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY export_consensus_fasta TO '${OUTPUT_DIR}/consensus.fa'           (FORMAT FASTA);
+COPY export_variants       TO '${OUTPUT_DIR}/variants.parquet'       (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY export_variants_fasta TO '${OUTPUT_DIR}/variants.fa'            (FORMAT FASTA);
+COPY export_unique         TO '${OUTPUT_DIR}/unique.parquet'         (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY umi_ref               TO '${OUTPUT_DIR}/umi_ref.parquet'        (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY bin_pass              TO '${OUTPUT_DIR}/bin_pass.parquet'       (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY cluster_members       TO '${OUTPUT_DIR}/cluster_members.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY variant_bins          TO '${OUTPUT_DIR}/variant_bins.parquet'   (FORMAT PARQUET, COMPRESSION 'zstd');
 EOF
+echo "    (export: $(( SECONDS - t0 ))s)"
 
-if [[ "$CLEANUP" != "none" ]]; then
-    t0=$SECONDS
-    echo "--- cleanup (${CLEANUP}) ---"
-    drop_per_read=$([[ "$CLEANUP" == "aggressive" ]] && echo true || echo false)
-    duckdb "$DB" <<EOF
-SET VARIABLE drop_per_read = ${drop_per_read};
-.read ${SCRIPT_DIR}/sql/99_cleanup.sql
-EOF
-    echo "    (cleanup: $(( SECONDS - t0 ))s)"
+if [[ "$KEEP_DB" != "true" ]]; then
+    rm -f -- "$DB" "${DB}.wal"
+    rm -rf -- "${DB}.tmp"
+    echo "--- pipeline DB deleted (use --keep-db to retain it) ---"
 fi
 
 echo

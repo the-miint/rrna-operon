@@ -17,7 +17,6 @@ external aligners, polishers, or scripting glue.
 - [Pipeline architecture](#pipeline-architecture)
 - [Parameters](#parameters)
 - [Outputs](#outputs)
-- [Database schema](#database-schema)
 - [Cleanup](#cleanup)
 - [Testing](#testing)
 - [Approximate runtime](#approximate-runtime)
@@ -58,8 +57,8 @@ stage can be re-queried without re-running.
   2. **Use a custom-built static binary** that already has miint linked in
      (e.g. `duckdb-miint/build/release/duckdb`). Pass the path with
      `--duckdb /path/to/duckdb` or set the `DUCKDB` env var.
-- ~30 GB free disk for a 1.5 M-read input (intermediate state; cleanup
-  reclaims most of this; see [Cleanup](#cleanup))
+- ~30 GB free disk for a 1.5 M-read input (intermediate `pipeline.duckdb`;
+  deleted at the end of the run by default — see [Cleanup](#cleanup))
 
 The pipeline calls only built-in or `duckdb-miint`-exported functions:
 
@@ -76,24 +75,30 @@ The pipeline calls only built-in or `duckdb-miint`-exported functions:
 ## Quick start
 
 ```bash
-# 1) Run the pipeline on a FASTQ
+# Run the pipeline on a FASTQ
 ./run.sh \
     --params params/revio.sql \
     --output output/ \
     --duckdb /path/to/duckdb-miint/build/release/duckdb \
     reads.fastq.gz
 
-# 2) Shrink the database after exports
-./run.sh ... --cleanup safe          # drops pure intermediates
-./run.sh ... --cleanup aggressive    # also drops large per-read tables
+# Pass --keep-db to retain pipeline.duckdb for interactive querying.
 ```
 
 Outputs land in `output/`:
 
-- `consensus.parquet` / `consensus.fa` — per-UMI consensus sequences
-- `variants.parquet` / `variants.fa` — phased variant consensuses
-- `unique.parquet` — deduplicated unique sequences with abundance
-- `pipeline.duckdb` — the working database (queryable post-run)
+| File | Content |
+|---|---|
+| `consensus.parquet` / `consensus.fa` | Per-UMI consensus sequences |
+| `variants.parquet` / `variants.fa` | Phased variant consensuses |
+| `unique.parquet` | Deduplicated unique sequences with abundance |
+| `umi_ref.parquet` | UMI cluster definitions |
+| `bin_pass.parquet` | Per-bin QC statistics |
+| `cluster_members.parquet` | Bin → sub-cluster mapping |
+| `variant_bins.parquet` | Variant → contributing-bin manifest |
+
+The intermediate `pipeline.duckdb` is deleted by default at the end of the
+run. Use `--keep-db` to retain it.
 
 ## Inputs
 
@@ -120,10 +125,14 @@ Stages are SQL scripts under `sql/`, executed in numeric order by `run.sh`:
 | 40 | `40_variants.sql` | Homopolymer-mask consensuses, two-pass vsearch clustering at `subcluster_id` (symmetric centroid resolution) |
 | 45 | `45_variant_calling.sql` | For each multi-member cluster: minimap2 align members to centroid → pileup → find SNP positions → per-read signature → phase reads by signature → abPOA + Q-weighted MSA to produce a phased consensus per variant |
 | 50 | `50_export.sql` | Build `export_consensus`, `export_variants`, `export_unique` views with read_fastx-compatible schemas |
-| 99 | `99_cleanup.sql` | (Optional) Drop intermediate tables and CHECKPOINT to compact disk |
 
 `run.sh` skips stage 05 when no `positive_ref_path` is set in the params
 file, and skips stage 45 when no UMI cluster has ≥ 2 members.
+
+After the stages, `run.sh` writes a set of Parquet files (sequence outputs
+plus provenance/QC tables — see [Outputs](#outputs)) and, by default,
+deletes the working `pipeline.duckdb` file. Pass `--keep-db` to retain it
+for interactive querying.
 
 ## Parameters
 
@@ -195,74 +204,96 @@ variant or from a single-member cluster.
 `umi_count` is the abundance metric of choice (PCR-corrected); `total_reads`
 is informational for confidence.
 
-## Database schema
+### Provenance / QC tables (Parquet, zstd-compressed)
 
-After a normal run (no cleanup), `pipeline.duckdb` contains the per-stage
-intermediates. After `--cleanup safe` it contains only the tables documented
-below; after `--cleanup aggressive` the per-read tables are emptied.
+Four additional Parquet files are written alongside the sequence outputs.
+Together they let you trace any unique sequence back to the contributing
+UMI bins, replay variant calling at different thresholds, and audit the
+UMI binning filters — all without keeping the multi-gigabyte intermediate
+database.
 
-### Final retained tables
+#### `umi_ref.parquet` — UMI cluster definitions
 
-| Table | Rows (typical) | Key columns | Purpose |
-|---|---|---|---|
-| `umi_ref` | 1 per UMI cluster centroid | `umi_id` PK, `size`, `umi_seq`, `u1`, `u2` | UMI cluster definitions (post-chimera-filter) |
-| `bin_pass` | 1 per passing UMI bin | `umi_id` PK, `n`, `n_plus`, `n_neg`, `ume_mean`, `ume_sd`, `cluster_size`, `bcr` | Bins that passed RoF/UME/BCR filters; QC stats |
-| `high_cov_consensus` | 1 per UMI bin | `bin_id` PK, `seq`, `qual`, `ubs` | Per-bin primer-trimmed consensus with quality |
-| `cluster_members` | 1 per (bin, cluster) pair | `cluster_id`, `bin_id` | Bin → sub-cluster mapping from the two-pass vsearch |
-| `variants` | 1 per phased variant | `variant_id` PK, `support`, `seq`, `qual` | Phased intra-genomic variant consensus |
-| `variant_bins` | 1 per variant | `variant_id` PK, `cluster_id`, `signature`, `support`, `read_ids` | Variant manifest (UMI bin IDs contributing) |
-
-### Per-read tables (retained by `safe` cleanup, dropped by `aggressive`)
-
-| Table | Rows | Key columns | Purpose |
-|---|---|---|---|
-| `reads_unfiltered` | 1 per input read | `read_id` PK, `seq`, `qual` | Reads after Q/length filter, before 16S filter |
-| `reads` | 1 per filtered read | same | Reads after 16S filter (or copy of `reads_unfiltered`) |
-| `bin_reads` | 1 per read-to-bin assignment | `bin_id`, `read_id`, `strand`, `seq`, `qual` | Final read→bin mapping (one read may appear in 0 or 1 bin) |
-
-### Export views (always present)
-
-| View | Source | Use |
+| Column | Type | Description |
 |---|---|---|
-| `export_consensus`, `export_consensus_fasta` | `high_cov_consensus` | Per-bin consensus output |
-| `export_variants`, `export_variants_fasta` | `variants` | Phased variant output |
-| `export_unique` | `variants` + `variant_bins` + `high_cov_consensus` | Deduplicated unique sequences with abundance |
+| `umi_id` | VARCHAR | Cluster identifier (`u_<rank>` by size) |
+| `size` | BIGINT | Number of dereplicated UMI sequences in the cluster |
+| `umi_seq` | VARCHAR | Canonical 36 bp UMI pair (u1 \|\| u2) |
+| `u1` | VARCHAR | 18 bp 5′ half |
+| `u2` | VARCHAR | 18 bp 3′ half |
 
-### Querying the DB after a run
+#### `bin_pass.parquet` — UMI bin QC
+
+One row per UMI bin that survived the RoF / UME / BCR filters at stage 20.
+
+| Column | Type | Description |
+|---|---|---|
+| `umi_id` | VARCHAR | FK → `umi_ref.umi_id` and `cluster_members.bin_id` |
+| `n` | BIGINT | Total reads assigned to the bin |
+| `n_plus`, `n_neg` | BIGINT | Read counts per strand |
+| `ume_mean`, `ume_sd` | DOUBLE | UMI matching error (mean/SD of summed NM per bin) |
+| `cluster_size` | BIGINT | Original UMI-cluster centroid count from stage 10 |
+| `bcr` | DOUBLE | Bin-to-cluster ratio (`n / cluster_size`) |
+
+#### `cluster_members.parquet` — bin → sub-cluster mapping
+
+| Column | Type | Description |
+|---|---|---|
+| `cluster_id` | VARCHAR | Centroid bin ID from the two-pass sub-clustering |
+| `bin_id` | VARCHAR | Member bin ID (== `cluster_id` for the centroid itself) |
+
+#### `variant_bins.parquet` — variant → contributing bins
+
+One row per phased variant.
+
+| Column | Type | Description |
+|---|---|---|
+| `variant_id` | VARCHAR | `<cluster_id>_var<N>` |
+| `cluster_id` | VARCHAR | FK → `cluster_members.cluster_id` |
+| `signature` | VARCHAR | Per-read SNP signature string |
+| `support` | BIGINT | Number of UMI bins with this signature |
+| `read_ids` | VARCHAR[] | Bin IDs contributing to the variant |
+
+### Querying the outputs
+
+The Parquet files are self-sufficient — no DuckDB database needed.
 
 ```sql
 -- Top 10 most abundant sequences
 SELECT read_id, umi_count, total_reads, length(sequence1) AS bp
-FROM export_unique
+FROM 'output/unique.parquet'
 ORDER BY umi_count DESC LIMIT 10;
 
 -- All UMI bins contributing to a specific variant
-SELECT vb.variant_id, vb.support, unnest(vb.read_ids) AS bin_id
-FROM variant_bins vb
-WHERE vb.variant_id = 'u_20_var1';
+SELECT variant_id, support, unnest(read_ids) AS bin_id
+FROM 'output/variant_bins.parquet'
+WHERE variant_id = 'u_20_var1';
 
 -- Coverage histogram of UMI bins
-SELECT ubs, count(*) AS n_bins
-FROM high_cov_consensus
+SELECT cast(comment[5:] AS BIGINT) AS ubs, count(*) AS n_bins
+FROM 'output/consensus.parquet'
 GROUP BY ubs ORDER BY ubs;
 
--- UMI binning QC: which bins were rejected?
-SELECT * FROM bin_pass WHERE bcr > 5;
+-- UMI binning QC: bins on the edge of the BCR filter
+SELECT * FROM 'output/bin_pass.parquet' WHERE bcr > 5;
+
+-- Cross-reference: which UMI clusters became multi-variant?
+SELECT cluster_id, count(*) AS n_variants, sum(support) AS total_bins
+FROM 'output/variant_bins.parquet'
+GROUP BY cluster_id HAVING count(*) > 1
+ORDER BY n_variants DESC;
 ```
 
 ## Cleanup
 
-Three modes, controlled by `--cleanup`:
+By default `run.sh` writes the Parquet outputs (see above), deletes the
+working `pipeline.duckdb` and its `.wal` / `.tmp` companions, and exits.
+Typical end state on a 1.5 M-read input: ~2 MB of Parquet plus the optional
+FASTA files (~170 MB total, dominated by `consensus.fa`).
 
-| Mode | Drops | Use case |
-|---|---|---|
-| `none` (default) | nothing | Default; keep full intermediate state for debugging |
-| `safe` | All purely intermediate tables (Hamming hit tables, pileup, MSA outputs, UMI extraction scratch, clustering scratch) | Long-term storage; preserves per-read provenance |
-| `aggressive` | `safe` + per-read tables emptied (`reads`, `reads_unfiltered`, `bin_reads`) | Smallest archive; you cannot re-derive bin-level statistics without re-running stages 00–20 |
-
-The cleanup stage runs `CHECKPOINT` after dropping. For maximum compaction
-(reclaim slack that DuckDB still holds), follow up with an
-`EXPORT DATABASE`/`IMPORT DATABASE` to a new file.
+To keep the intermediate database for interactive querying or debugging,
+pass `--keep-db`. The retained DB is large — ~30 GB on a 1.5 M-read run —
+and is not pruned.
 
 ## Testing
 

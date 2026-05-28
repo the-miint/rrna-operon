@@ -11,7 +11,7 @@ CREATE OR REPLACE TABLE positive_hits AS
 SELECT DISTINCT read_id
 FROM align_minimap2('reads_for_filter', subject_table='positive_ref',
      preset := 'map-hifi', max_secondary := 0)
-WHERE flags & 4 = 0
+WHERE NOT alignment_is_unmapped(flags)
   AND stop_position - position + 1 >= 1000;
 
 CREATE OR REPLACE TABLE reads AS

@@ -21,6 +21,9 @@ AND cm.cluster_id IN (
     GROUP BY 1 HAVING count(*) >= getvariable('variant_min_support')
 );
 
+-- Keep only primary, mapped alignments. Supplementary alignments emit
+-- hard-clipped CIGARs (e.g. '1750=2732H') whose query consumption no
+-- longer matches the full sequence we pass to compute_pileup.
 CREATE OR REPLACE TABLE cluster_alignments AS
 SELECT a.read_id, a.reference, a.position, a.cigar,
        q.sequence1 AS sequence, h.qual
@@ -28,7 +31,8 @@ FROM align_minimap2('_variant_queries', subject_table='_variant_refs',
      preset := 'asm5', max_secondary := 0, eqx := true) a
 JOIN _variant_queries q ON q.read_id = a.read_id
 JOIN high_cov_consensus h ON h.bin_id = a.read_id
-WHERE a.flags & 4 = 0;
+WHERE NOT alignment_is_unmapped(a.flags)
+  AND alignment_is_primary(a.flags);
 
 DROP TABLE IF EXISTS _variant_queries;
 DROP TABLE IF EXISTS _variant_refs;
