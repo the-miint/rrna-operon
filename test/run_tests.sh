@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DUCKDB="${DUCKDB:-${PROJECT_DIR}/../duckdb-miint/build/release/duckdb}"
+duckdb() { "$DUCKDB" -unsigned -cmd "LOAD miint;" "$@"; }
 WORKDIR="${SCRIPT_DIR}/workdir"
 DB="${WORKDIR}/test.duckdb"
 FIXTURE="${SCRIPT_DIR}/fixtures/synthetic.fq"
@@ -57,7 +58,7 @@ assert_file_exists() {
 }
 
 query() {
-    "$DUCKDB" -csv -noheader "$DB" "$1" 2>/dev/null | tr -d '[:space:]'
+    duckdb -csv -noheader "$DB" "$1" 2>/dev/null | tr -d '[:space:]'
 }
 
 # Session variables that must be set each invocation (not persisted in .duckdb)
@@ -65,7 +66,7 @@ VAR_SETUP="SET VARIABLE output_dir = '${WORKDIR}';"
 
 run_phase() {
     local sql_file="$1"
-    "$DUCKDB" "$DB" <<EOF
+    duckdb "$DB" <<EOF
 ${VAR_SETUP}
 .read ${PARAMS}
 .read ${sql_file}
@@ -82,7 +83,7 @@ cleanup
 mkdir -p "$WORKDIR"
 
 # Create the persistent raw_input view (persists in .duckdb file)
-"$DUCKDB" "$DB" "CREATE OR REPLACE VIEW raw_input AS SELECT read_id, sequence1, qual1 FROM read_fastx('${FIXTURE}');"
+duckdb "$DB" "CREATE OR REPLACE VIEW raw_input AS SELECT read_id, sequence1, qual1 FROM read_fastx('${FIXTURE}');"
 
 # --- Phase 1: Ingest ---
 echo "Phase 1: Ingest (00_ingest.sql)"
@@ -99,7 +100,7 @@ fi
 # --- Phase 1b: Positive filter ---
 # Test skips positive filter (no real 16S reference for synthetic fixture).
 echo "Phase 1b: Positive filter (skipped, no positive_ref_path in test params)"
-"$DUCKDB" "$DB" <<EOF
+duckdb "$DB" <<EOF
 ${VAR_SETUP}
 CREATE OR REPLACE TABLE reads AS SELECT * FROM reads_unfiltered;
 EOF
@@ -154,7 +155,7 @@ fi
 echo "Phase 6: Export (50_export.sql)"
 if [[ -f "${PROJECT_DIR}/sql/50_export.sql" ]]; then
     run_phase "${PROJECT_DIR}/sql/50_export.sql"
-    "$DUCKDB" "$DB" <<EOF
+    duckdb "$DB" <<EOF
 COPY export_consensus TO '${WORKDIR}/consensus.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
 COPY export_consensus_fasta TO '${WORKDIR}/consensus.fa' (FORMAT FASTA);
 COPY export_variants TO '${WORKDIR}/variants.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
@@ -164,7 +165,7 @@ EOF
     assert_file_exists "consensus.fa" "${WORKDIR}/consensus.fa"
     assert_file_exists "variants.parquet" "${WORKDIR}/variants.parquet"
     assert_ge "consensus parquet rows" "1" \
-        "$("$DUCKDB" -csv -noheader :memory: "SELECT count(*) FROM read_parquet('${WORKDIR}/consensus.parquet')" | tr -d '[:space:]')"
+        "$(duckdb -csv -noheader :memory: "SELECT count(*) FROM read_parquet('${WORKDIR}/consensus.parquet')" | tr -d '[:space:]')"
 else
     echo "  SKIP: not yet implemented"
 fi

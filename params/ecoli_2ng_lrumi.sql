@@ -1,3 +1,10 @@
+-- E. coli 2ng, parameters aligned with Karst et al. longread_umi defaults
+-- to isolate algorithm differences (abPOA + Q-weighted consensus) from
+-- threshold differences. Derived from ecoli_2ng.sql with:
+--   umi_cluster_id      0.95  -> 0.90
+--   umi_max_nm_per_half 2     -> 6     (longread_umi: NM <= 6 total via BWA)
+--   subcluster_id       0.998 -> 0.995
+--   variant_min_support 2     -> 3
 SET VARIABLE min_q               = 28;
 SET VARIABLE min_len             = 3500;
 SET VARIABLE max_len             = 6000;
@@ -21,6 +28,4 @@ SET VARIABLE umi_coverage_min    = 5;
 SET VARIABLE subcluster_id       = 0.995;
 SET VARIABLE variant_min_support = 3;
 SET VARIABLE snp_min_alt_depth   = 2;
--- positive_ref_path: path to 16S reference FASTA for the pre-filter step
--- (e.g., 88_otus.fasta from ftp.microbio.me). Leave commented to skip.
--- SET VARIABLE positive_ref_path = '/path/to/88_otus.fasta';
+SET VARIABLE positive_ref_path   = '/home/dtmcdonald/88_otus.fasta';

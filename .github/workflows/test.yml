@@ -1,0 +1,73 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# The pipeline depends on the `miint` DuckDB extension. CI installs a stock
+# DuckDB build from the official release archive, then pulls `miint` from
+# the microbio.me extension repository (unsigned, allowed via -unsigned).
+env:
+  DUCKDB_VERSION: v1.5.3
+  MIINT_REPO_URL: https://ftp.microbio.me/pub/miint
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out rrna-operon
+        uses: actions/checkout@v4
+
+      - name: Cache DuckDB binary and miint extension
+        id: duckdb-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.duckdb-bin
+            ~/.duckdb/extensions
+          key: duckdb-${{ env.DUCKDB_VERSION }}-miint-${{ runner.os }}-v1
+
+      - name: Install DuckDB
+        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/.duckdb-bin"
+          cd "${GITHUB_WORKSPACE}/.duckdb-bin"
+          curl -fsSL -o duckdb.zip \
+            "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
+          unzip -q duckdb.zip
+          rm duckdb.zip
+          chmod +x duckdb
+          ./duckdb -c "SELECT version();"
+
+      - name: Install miint extension
+        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        run: |
+          "${GITHUB_WORKSPACE}/.duckdb-bin/duckdb" -unsigned \
+            -c "INSTALL miint FROM '${MIINT_REPO_URL}'; LOAD miint; SELECT 'loaded' AS status;"
+
+      - name: Verify miint extension loads
+        run: |
+          "${GITHUB_WORKSPACE}/.duckdb-bin/duckdb" -unsigned \
+            -c "LOAD miint; SELECT count(*) FROM duckdb_functions() WHERE function_name LIKE 'align_%' OR function_name LIKE 'extract_linked_%';"
+
+      - name: Run test suite
+        run: |
+          DUCKDB="${GITHUB_WORKSPACE}/.duckdb-bin/duckdb" \
+            ./test/run_tests.sh
+
+      - name: Smoke-test cleanup stage on test DB
+        run: |
+          DUCKDB="${GITHUB_WORKSPACE}/.duckdb-bin/duckdb"
+          "$DUCKDB" -unsigned -cmd "LOAD miint;" test/workdir/test.duckdb <<'SQL'
+          SET VARIABLE drop_per_read = true;
+          .read sql/99_cleanup.sql
+          SQL
+          # Verify essential tables survived cleanup
+          "$DUCKDB" -unsigned -cmd "LOAD miint;" -csv -noheader \
+            test/workdir/test.duckdb \
+            "SELECT count(*) FROM high_cov_consensus" | grep -q '^[1-9]'
