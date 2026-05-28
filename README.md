@@ -96,6 +96,7 @@ Outputs land in `output/`:
 | `bin_pass.parquet` | Per-bin QC statistics |
 | `cluster_members.parquet` | Bin → sub-cluster mapping |
 | `variant_bins.parquet` | Variant → contributing-bin manifest |
+| `primer_extract_status.parquet` | Per-read pass/fail for UMI primer extraction |
 | `positive_filter_status.parquet` | Per-read pass/fail for the 16S filter (only when stage 05 runs) |
 
 The intermediate `pipeline.duckdb` is deleted by default at the end of the
@@ -207,12 +208,12 @@ is informational for confidence.
 
 ### Provenance / QC tables (Parquet, zstd-compressed)
 
-Up to five additional Parquet files are written alongside the sequence
-outputs (four always, one — `positive_filter_status.parquet` — only when
+Up to six additional Parquet files are written alongside the sequence
+outputs (five always, one — `positive_filter_status.parquet` — only when
 stage 05 runs). Together they let you trace any unique sequence back to
 the contributing UMI bins, replay variant calling at different
-thresholds, and audit the UMI binning and 16S filters — all without
-keeping the multi-gigabyte intermediate database.
+thresholds, and audit each stage's filters — all without keeping the
+multi-gigabyte intermediate database.
 
 #### `umi_ref.parquet` — UMI cluster definitions
 
@@ -257,6 +258,22 @@ row per read that passed the Q/length filter at stage 00.
 Rejected reads (`passed = false`) drop out before UMI extraction; this
 file is the only place they remain identifiable post-run.
 
+#### `primer_extract_status.parquet` — per-read UMI primer extraction outcome
+
+One row per read that entered stage 10 (i.e., passed stages 00 and, if
+configured, 05).
+
+| Column | Type | Description |
+|---|---|---|
+| `read_id` | VARCHAR | Input read identifier |
+| `umis_extracted` | BOOLEAN | True if `extract_linked_amplicon` located both flanking primers on at least one strand and the resulting UMI pair matched the canonical regex |
+
+`umis_extracted = false` means the read survived quality/length and 16S
+filters but had primers too degraded (errors above the `error_rate`
+budget), missing, or unrecognizable — common causes include adapter
+contamination or read truncation. These reads drop out of UMI binning
+silently; this file is the only post-run record of them.
+
 #### `variant_bins.parquet` — variant → contributing bins
 
 One row per phased variant.
@@ -297,6 +314,12 @@ SELECT count(*)                            AS n_total,
        count(*) FILTER (WHERE NOT passed)  AS n_rejected,
        (count(*) FILTER (WHERE NOT passed))::DOUBLE / count(*) AS frac_rejected
 FROM 'output/positive_filter_status.parquet';
+
+-- How many reads survived the 16S filter but lacked recoverable UMI primers?
+SELECT count(*)                                   AS n_post_05,
+       count(*) FILTER (WHERE NOT umis_extracted) AS n_no_primers,
+       (count(*) FILTER (WHERE NOT umis_extracted))::DOUBLE / count(*) AS frac_no_primers
+FROM 'output/primer_extract_status.parquet';
 
 -- Cross-reference: which UMI clusters became multi-variant?
 SELECT cluster_id, count(*) AS n_variants, sum(support) AS total_bins

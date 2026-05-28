@@ -136,6 +136,7 @@ COPY umi_ref               TO '${OUTPUT_DIR}/umi_ref.parquet'        (FORMAT PAR
 COPY bin_pass              TO '${OUTPUT_DIR}/bin_pass.parquet'       (FORMAT PARQUET, COMPRESSION 'zstd');
 COPY cluster_members       TO '${OUTPUT_DIR}/cluster_members.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
 COPY variant_bins          TO '${OUTPUT_DIR}/variant_bins.parquet'   (FORMAT PARQUET, COMPRESSION 'zstd');
+COPY primer_extract_status TO '${OUTPUT_DIR}/primer_extract_status.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
 EOF
 
 # Emit the positive-filter manifest only if stage 05 actually ran.

@@ -35,6 +35,18 @@ WHERE u1 IS NOT NULL
   AND u2 IS NOT NULL
   AND regexp_matches(u1 || u2, getvariable('umi_pair_pattern'));
 
+-- Per-read primer-extraction manifest: one row per stage-05-passing read
+-- with a boolean recording whether either strand orientation yielded a
+-- valid UMI pair. Reads that fail extract_linked_amplicon on both strands
+-- (NULL return from the WFA2 anchor search) drop out of umi_candidates
+-- and would otherwise be invisible post-run; export this so the rejected
+-- set is recoverable.
+CREATE OR REPLACE TABLE primer_extract_status AS
+SELECT r.read_id,
+       (c.read_id IS NOT NULL) AS umis_extracted
+FROM reads r
+LEFT JOIN (SELECT DISTINCT read_id FROM umi_candidates) c USING (read_id);
+
 -- Stage 4: dereplicate + cluster UMI pairs
 CREATE OR REPLACE TABLE umi_unique AS
 SELECT umi_pair AS sequence,
