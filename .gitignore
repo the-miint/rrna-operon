@@ -3,5 +3,6 @@
 test/workdir/
 output/
 output_*/
+test_subsample/
 *.log
 .claude/

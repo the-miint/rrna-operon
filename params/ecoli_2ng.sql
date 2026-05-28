@@ -21,4 +21,3 @@ SET VARIABLE umi_coverage_min    = 5;
 SET VARIABLE subcluster_id       = 0.998;
 SET VARIABLE variant_min_support = 2;
 SET VARIABLE snp_min_alt_depth   = 2;
-SET VARIABLE positive_ref_path   = '/home/dtmcdonald/88_otus.fasta';

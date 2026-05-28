@@ -100,18 +100,6 @@ for sql_file in "${SCRIPT_DIR}"/sql/[0-9]*.sql; do
         fi
         continue
     fi
-    if [[ "$(basename "$sql_file")" == "05_positive_filter.sql" ]]; then
-        if grep -q 'positive_ref_path' "$PARAMS" && ! grep -q '^\s*--.*positive_ref_path' "$PARAMS"; then
-            run_phase "$sql_file"
-        else
-            echo "--- 05_positive_filter (skipped, no positive_ref_path) ---"
-            duckdb "$DB" <<EOF
-${INPUT_SQL}
-CREATE OR REPLACE TABLE reads AS SELECT * FROM reads_unfiltered;
-EOF
-        fi
-        continue
-    fi
     run_phase "$sql_file"
 done
 
@@ -138,16 +126,6 @@ COPY cluster_members       TO '${OUTPUT_DIR}/cluster_members.parquet' (FORMAT PA
 COPY variant_bins          TO '${OUTPUT_DIR}/variant_bins.parquet'   (FORMAT PARQUET, COMPRESSION 'zstd');
 COPY primer_extract_status TO '${OUTPUT_DIR}/primer_extract_status.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
 EOF
-
-# Emit the positive-filter manifest only if stage 05 actually ran.
-has_pfs=$(duckdb "$DB" -noheader -list \
-    "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'positive_filter_status';" 2>/dev/null)
-if [[ "${has_pfs:-0}" -gt 0 ]]; then
-    duckdb "$DB" <<EOF
-COPY positive_filter_status TO '${OUTPUT_DIR}/positive_filter_status.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
-EOF
-fi
-
 echo "    (export: $(( SECONDS - t0 ))s)"
 
 if [[ "$KEEP_DB" != "true" ]]; then

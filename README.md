@@ -97,7 +97,6 @@ Outputs land in `output/`:
 | `cluster_members.parquet` | Bin → sub-cluster mapping |
 | `variant_bins.parquet` | Variant → contributing-bin manifest |
 | `primer_extract_status.parquet` | Per-read pass/fail for UMI primer extraction |
-| `positive_filter_status.parquet` | Per-read pass/fail for the 16S filter (only when stage 05 runs) |
 
 The intermediate `pipeline.duckdb` is deleted by default at the end of the
 run. Use `--keep-db` to retain it.
@@ -120,16 +119,22 @@ Stages are SQL scripts under `sql/`, executed in numeric order by `run.sh`:
 | Stage | File | Purpose |
 |---|---|---|
 | 00 | `00_ingest.sql` | Quality and length filtering via `filter_read` (Q ≥ min_q, length range, ≤ N ambiguous bases) |
-| 05 | `05_positive_filter.sql` | Optional 16S positive filter — `align_minimap2 map-hifi` against a reference; keep reads with ≥ 1 kb alignment. Skipped if no `positive_ref_path` is set |
-| 10 | `10_umi_extract.sql` | Extract 18 bp UMI halves from both read termini using `extract_linked_amplicon` against 4 anchor sequences; build canonical UMI pairs (regex-validated); dereplicate; vsearch-cluster; remove chimeric UMI pairs by requiring all four 18-mer halves (forward + RC for both ends) to be owned by the same UMI cluster |
+| 10 | `10_umi_extract.sql` | Extract 18 bp UMI halves from both read termini using `extract_linked_amplicon` against 4 anchor sequences; build canonical UMI pairs (regex-validated); dereplicate; vsearch-cluster; remove chimeric UMI pairs by requiring all four 18-mer halves (forward + RC for both ends) to be owned by the same UMI cluster. Reads with no recoverable primer pair drop here — see `primer_extract_status.parquet` |
 | 20 | `20_umi_bin.sql` | Map each read to a UMI bin via Hamming distance (`match_short_barcodes`, ≤ `umi_max_nm_per_half` per half); apply RoF (read-orientation fraction), UME (UMI matching error), and BCR (bin-to-cluster ratio) filters |
 | 30 | `30_consensus.sql` | Per-bin abPOA MSA + `compute_msa_consensus` (Q-weighted); primer-trim with `extract_linked_amplicon`; gate by coverage ≥ `umi_coverage_min` |
 | 40 | `40_variants.sql` | Homopolymer-mask consensuses, two-pass vsearch clustering at `subcluster_id` (symmetric centroid resolution) |
 | 45 | `45_variant_calling.sql` | For each multi-member cluster: minimap2 align members to centroid → pileup → find SNP positions → per-read signature → phase reads by signature → abPOA + Q-weighted MSA to produce a phased consensus per variant |
 | 50 | `50_export.sql` | Build `export_consensus`, `export_variants`, `export_unique` views with read_fastx-compatible schemas |
 
-`run.sh` skips stage 05 when no `positive_ref_path` is set in the params
-file, and skips stage 45 when no UMI cluster has ≥ 2 members.
+`run.sh` skips stage 45 when no UMI cluster has ≥ 2 members.
+
+Host filtering is implicit: bacterial UMI primers do not hybridise to
+human or other off-target DNA, so reads that lack the flanking primer
+sequence are dropped at stage 10 by `extract_linked_amplicon` (which
+returns NULL when an anchor cannot be located). An earlier
+minimap2-based 16S-mapping filter was removed in favour of relying on
+this implicit host-filter, which is both faster and more selective at
+the boundary between bacterial and off-target DNA.
 
 After the stages, `run.sh` writes a set of Parquet files (sequence outputs
 plus provenance/QC tables — see [Outputs](#outputs)) and, by default,
@@ -158,7 +163,6 @@ the file and pass it as `--params`.
 | `subcluster_id` | 0.995 | vsearch identity for two-pass per-bin consensus sub-clustering |
 | `variant_min_support` | 3 | Minimum UMI bins per phased variant |
 | `snp_min_alt_depth` | 2 | Minimum alt-base depth at a position to be called a SNP site |
-| `positive_ref_path` | (unset) | Path to a 16S reference FASTA. If set, enables the positive filter at stage 05 |
 
 ## Outputs
 
@@ -208,12 +212,11 @@ is informational for confidence.
 
 ### Provenance / QC tables (Parquet, zstd-compressed)
 
-Up to six additional Parquet files are written alongside the sequence
-outputs (five always, one — `positive_filter_status.parquet` — only when
-stage 05 runs). Together they let you trace any unique sequence back to
-the contributing UMI bins, replay variant calling at different
-thresholds, and audit each stage's filters — all without keeping the
-multi-gigabyte intermediate database.
+Five additional Parquet files are written alongside the sequence
+outputs. Together they let you trace any unique sequence back to the
+contributing UMI bins, replay variant calling at different thresholds,
+and audit each stage's filters — all without keeping the multi-gigabyte
+intermediate database.
 
 #### `umi_ref.parquet` — UMI cluster definitions
 
@@ -245,23 +248,9 @@ One row per UMI bin that survived the RoF / UME / BCR filters at stage 20.
 | `cluster_id` | VARCHAR | Centroid bin ID from the two-pass sub-clustering |
 | `bin_id` | VARCHAR | Member bin ID (== `cluster_id` for the centroid itself) |
 
-#### `positive_filter_status.parquet` — per-read 16S filter outcome
-
-Emitted only when stage 05 runs (i.e., `positive_ref_path` is set). One
-row per read that passed the Q/length filter at stage 00.
-
-| Column | Type | Description |
-|---|---|---|
-| `read_id` | VARCHAR | Input read identifier |
-| `passed` | BOOLEAN | True if the read had a ≥ 1 kb mapping to the 16S reference |
-
-Rejected reads (`passed = false`) drop out before UMI extraction; this
-file is the only place they remain identifiable post-run.
-
 #### `primer_extract_status.parquet` — per-read UMI primer extraction outcome
 
-One row per read that entered stage 10 (i.e., passed stages 00 and, if
-configured, 05).
+One row per read that entered stage 10 (i.e., passed stage 00).
 
 | Column | Type | Description |
 |---|---|---|
@@ -309,14 +298,8 @@ GROUP BY ubs ORDER BY ubs;
 -- UMI binning QC: bins on the edge of the BCR filter
 SELECT * FROM 'output/bin_pass.parquet' WHERE bcr > 5;
 
--- How many reads failed the 16S filter, and what fraction?
-SELECT count(*)                            AS n_total,
-       count(*) FILTER (WHERE NOT passed)  AS n_rejected,
-       (count(*) FILTER (WHERE NOT passed))::DOUBLE / count(*) AS frac_rejected
-FROM 'output/positive_filter_status.parquet';
-
--- How many reads survived the 16S filter but lacked recoverable UMI primers?
-SELECT count(*)                                   AS n_post_05,
+-- How many reads lacked recoverable UMI primers (implicit host filter)?
+SELECT count(*)                                   AS n_post_ingest,
        count(*) FILTER (WHERE NOT umis_extracted) AS n_no_primers,
        (count(*) FILTER (WHERE NOT umis_extracted))::DOUBLE / count(*) AS frac_no_primers
 FROM 'output/primer_extract_status.parquet';
@@ -358,7 +341,6 @@ Measured on Linux, 12 cores, 64 GB RAM, NVMe SSD, ~1.57 M Revio HiFi reads
 | Stage | Time |
 |---|---|
 | `00_ingest` | ~2.5 min |
-| `05_positive_filter` (minimap2 map-hifi vs 88_otus) | ~15.5 min |
 | `10_umi_extract` | ~40 s |
 | `20_umi_bin` | 6–15 min (scales with `umi_max_nm_per_half`²) |
 | `30_consensus` (abPOA + Q-weighted MSA) | ~6.5 min |
@@ -367,8 +349,7 @@ Measured on Linux, 12 cores, 64 GB RAM, NVMe SSD, ~1.57 M Revio HiFi reads
 | `50_export` | < 1 s |
 | **Total** | **~100–106 min** |
 
-Stage 40 dominates wall-clock; stage 05 is the optional 16S filter and can be
-skipped if the input is already a known operon amplicon.
+Stage 40 dominates wall-clock.
 
 ## Algorithmic notes
 

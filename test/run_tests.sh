@@ -89,22 +89,13 @@ duckdb "$DB" "CREATE OR REPLACE VIEW raw_input AS SELECT read_id, sequence1, qua
 echo "Phase 1: Ingest (00_ingest.sql)"
 if [[ -f "${PROJECT_DIR}/sql/00_ingest.sql" ]]; then
     run_phase "${PROJECT_DIR}/sql/00_ingest.sql"
-    assert_ge "reads_unfiltered has rows" "1" "$(query "SELECT count(*) FROM reads_unfiltered")"
-    assert_eq "reads_unfiltered row count" "11" "$(query "SELECT count(*) FROM reads_unfiltered")"
+    assert_ge "reads has rows" "1" "$(query "SELECT count(*) FROM reads")"
+    assert_eq "reads row count" "11" "$(query "SELECT count(*) FROM reads")"
     assert_eq "all reads pass length filter" "0" \
-        "$(query "SELECT count(*) FROM reads_unfiltered WHERE length(seq) < 50 OR length(seq) > 300")"
+        "$(query "SELECT count(*) FROM reads WHERE length(seq) < 50 OR length(seq) > 300")"
 else
     echo "  SKIP: sql/00_ingest.sql not found"
 fi
-
-# --- Phase 1b: Positive filter ---
-# Test skips positive filter (no real 16S reference for synthetic fixture).
-echo "Phase 1b: Positive filter (skipped, no positive_ref_path in test params)"
-duckdb "$DB" <<EOF
-${VAR_SETUP}
-CREATE OR REPLACE TABLE reads AS SELECT * FROM reads_unfiltered;
-EOF
-assert_ge "reads has rows" "1" "$(query "SELECT count(*) FROM reads")"
 
 # --- Phase 2: UMI extraction ---
 echo "Phase 2: UMI extraction (10_umi_extract.sql)"

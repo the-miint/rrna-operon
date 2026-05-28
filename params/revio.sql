@@ -21,6 +21,3 @@ SET VARIABLE umi_coverage_min    = 5;
 SET VARIABLE subcluster_id       = 0.995;
 SET VARIABLE variant_min_support = 3;
 SET VARIABLE snp_min_alt_depth   = 2;
--- positive_ref_path: path to 16S reference FASTA for the pre-filter step
--- (e.g., 88_otus.fasta from ftp.microbio.me). Leave commented to skip.
--- SET VARIABLE positive_ref_path = '/path/to/88_otus.fasta';
