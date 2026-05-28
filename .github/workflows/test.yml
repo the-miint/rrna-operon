@@ -11,7 +11,10 @@ on:
 # DuckDB build from the official release archive, then pulls `miint` from
 # the microbio.me extension repository (unsigned, allowed via -unsigned).
 env:
-  DUCKDB_VERSION: v1.5.3
+  # DuckDB CLI version must match the version the miint extension was built
+  # against (`miint.duckdb_extension.gz` is published under v<X.Y.Z>/ on the
+  # repository). Bump both together when a new miint release ships.
+  DUCKDB_VERSION: v1.5.2
   MIINT_REPO_URL: https://ftp.microbio.me/pub/miint
 
 jobs:
