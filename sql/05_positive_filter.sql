@@ -14,6 +14,15 @@ FROM align_minimap2('reads_for_filter', subject_table='positive_ref',
 WHERE NOT alignment_is_unmapped(flags)
   AND stop_position - position + 1 >= 1000;
 
+-- Per-read pass/fail manifest: one row per input read with a boolean,
+-- exported as positive_filter_status.parquet so callers can recover the
+-- set of rejected reads after the working DB is deleted.
+CREATE OR REPLACE TABLE positive_filter_status AS
+SELECT r.read_id,
+       (h.read_id IS NOT NULL) AS passed
+FROM reads_unfiltered r
+LEFT JOIN positive_hits h USING (read_id);
+
 CREATE OR REPLACE TABLE reads AS
 SELECT r.*
 FROM reads_unfiltered r

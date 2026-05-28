@@ -137,6 +137,16 @@ COPY bin_pass              TO '${OUTPUT_DIR}/bin_pass.parquet'       (FORMAT PAR
 COPY cluster_members       TO '${OUTPUT_DIR}/cluster_members.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
 COPY variant_bins          TO '${OUTPUT_DIR}/variant_bins.parquet'   (FORMAT PARQUET, COMPRESSION 'zstd');
 EOF
+
+# Emit the positive-filter manifest only if stage 05 actually ran.
+has_pfs=$(duckdb "$DB" -noheader -list \
+    "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'positive_filter_status';" 2>/dev/null)
+if [[ "${has_pfs:-0}" -gt 0 ]]; then
+    duckdb "$DB" <<EOF
+COPY positive_filter_status TO '${OUTPUT_DIR}/positive_filter_status.parquet' (FORMAT PARQUET, COMPRESSION 'zstd');
+EOF
+fi
+
 echo "    (export: $(( SECONDS - t0 ))s)"
 
 if [[ "$KEEP_DB" != "true" ]]; then
