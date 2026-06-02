@@ -15,7 +15,7 @@ the `duckdb-miint` DuckDB extension. There is no Python and no
 auto-installed pip dependency tree.
 
 Authoritative dependency: the `miint` extension at
-`https://ftp.microbio.me/pub/miint`, built against DuckDB **v1.5.2**.
+`https://ftp.microbio.me/pub/miint`, built against DuckDB **v1.5.3**.
 
 ## Two extension delivery paths — both must keep working
 
@@ -24,7 +24,7 @@ The codebase is invoked in two environments:
 1. **Custom static build** (local dev): `../duckdb-miint/build/release/duckdb`
    has miint linked in. `LOAD miint;` is a no-op; `-unsigned` is accepted but
    unused.
-2. **Stock DuckDB + community-install** (CI, users): stock v1.5.2 CLI plus
+2. **Stock DuckDB + community-install** (CI, users): stock v1.5.3 CLI plus
    `INSTALL miint FROM 'https://ftp.microbio.me/pub/miint';`. Every session
    needs `-unsigned -cmd "LOAD miint;"` because the extension is unsigned
    and not auto-loaded.
@@ -115,7 +115,7 @@ the cleanup model deletes the DB rather than trying to shrink it.
 
 `.github/workflows/test.yml`:
 
-- DuckDB version pinned to `v1.5.2` via `env.DUCKDB_VERSION`. This must
+- DuckDB version pinned to `v1.5.3` via `env.DUCKDB_VERSION`. This must
   match the version of miint published at
   `https://ftp.microbio.me/pub/miint/v<X.Y.Z>/`. **Bump both together**
   when a new miint release ships.
