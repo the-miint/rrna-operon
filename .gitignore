@@ -6,3 +6,6 @@ output_*/
 test_subsample/
 *.log
 .claude/
+# install.sh artifacts
+/bin/
+.install.*/

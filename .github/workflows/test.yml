@@ -11,11 +11,11 @@ on:
 # DuckDB build from the official release archive, then pulls `miint` from
 # the microbio.me extension repository (unsigned, allowed via -unsigned).
 env:
-  # DuckDB CLI version must match the version the miint extension was built
-  # against (`miint.duckdb_extension.gz` is published under v<X.Y.Z>/ on the
-  # repository). Bump both together when a new miint release ships.
+  # DuckDB CLI version — used for the cache key here and pinned identically in
+  # install.sh (which performs the actual DuckDB + miint install). Must match
+  # the version the miint extension was built against; bump in lockstep with
+  # install.sh and CLAUDE.md when a new miint release ships.
   DUCKDB_VERSION: v1.5.3
-  MIINT_REPO_URL: https://ftp.microbio.me/pub/miint
 
 jobs:
   test:
@@ -35,23 +35,14 @@ jobs:
             ~/.duckdb/extensions
           key: duckdb-${{ env.DUCKDB_VERSION }}-miint-${{ runner.os }}-v1
 
-      - name: Install DuckDB
+      - name: Install DuckDB + miint via install.sh
         if: steps.duckdb-cache.outputs.cache-hit != 'true'
         run: |
-          mkdir -p "${GITHUB_WORKSPACE}/.duckdb-bin"
-          cd "${GITHUB_WORKSPACE}/.duckdb-bin"
-          curl -fsSL -o duckdb.zip \
-            "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
-          unzip -q duckdb.zip
-          rm duckdb.zip
-          chmod +x duckdb
-          ./duckdb -c "SELECT version();"
-
-      - name: Install miint extension
-        if: steps.duckdb-cache.outputs.cache-hit != 'true'
-        run: |
-          "${GITHUB_WORKSPACE}/.duckdb-bin/duckdb" -unsigned \
-            -c "INSTALL miint FROM '${MIINT_REPO_URL}'; LOAD miint; SELECT 'loaded' AS status;"
+          # Exercise the user-facing installer. --no-barrnap skips the heavy
+          # conda/Infernal annotation deps the test suite does not use; the
+          # DuckDB-CLI download + miint INSTALL/LOAD path is covered.
+          DUCKDB_DEST="${GITHUB_WORKSPACE}/.duckdb-bin" ./install.sh --no-barrnap
+          "${GITHUB_WORKSPACE}/.duckdb-bin/duckdb" --version
 
       - name: Verify miint extension loads
         run: |

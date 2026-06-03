@@ -12,11 +12,13 @@ external aligners, polishers, or scripting glue.
 
 - [What it does](#what-it-does)
 - [Requirements](#requirements)
+- [Install](#install)
 - [Quick start](#quick-start)
 - [Inputs](#inputs)
 - [Pipeline architecture](#pipeline-architecture)
 - [Parameters](#parameters)
 - [Outputs](#outputs)
+- [Operon annotation (optional)](#operon-annotation-optional)
 - [Cleanup](#cleanup)
 - [Testing](#testing)
 - [Approximate runtime](#approximate-runtime)
@@ -59,6 +61,10 @@ stage can be re-queried without re-running.
      `--duckdb /path/to/duckdb` or set the `DUCKDB` env var.
 - ~30 GB free disk for a 1.5 M-read input (intermediate `pipeline.duckdb`;
   deleted at the end of the run by default — see [Cleanup](#cleanup))
+- *(optional)* [barrnap](https://github.com/tseemann/barrnap) ≥ 1.10 for
+  [operon annotation](#operon-annotation-optional) (rRNA + ITS tRNA); installed
+  by `install.sh` into a dedicated `barrnap` conda env. Not needed to run the
+  core pipeline.
 
 The pipeline calls only built-in or `duckdb-miint`-exported functions:
 
@@ -71,6 +77,41 @@ The pipeline calls only built-in or `duckdb-miint`-exported functions:
 | `compute_msa_consensus`, `compute_pileup` | duckdb-miint |
 | `cluster_sequences_vsearch`, `search_sequences_vsearch` | duckdb-miint (vsearch lib) |
 | `sequence_dna_reverse_complement` | duckdb-miint |
+
+## Install
+
+The fastest way to a working toolchain is the bundled installer:
+
+```bash
+./install.sh
+```
+
+It is idempotent (re-running skips anything already present) and sets up three
+things:
+
+1. **A conda/mamba package manager.** `mamba` is preferred when present (its
+   solver is much faster). If neither `mamba` nor `conda` is found on `PATH`
+   or in a standard location,
+   [Miniforge](https://github.com/conda-forge/miniforge) is installed to
+   `~/miniforge3` (it bundles `mamba` and conda-forge).
+2. **barrnap** (with aragorn/infernal/diamond) in a dedicated `barrnap` conda
+   env — used for the optional [operon annotation](#operon-annotation-optional).
+3. **The DuckDB v1.5.3 CLI + the `miint` extension** — the CLI is placed in
+   `./bin/duckdb` and `miint` is registered via
+   `INSTALL miint FROM 'https://ftp.microbio.me/pub/miint'`.
+
+Useful flags:
+
+- `./install.sh --no-barrnap` — DuckDB + miint only (skip conda/barrnap); this
+  is what CI uses.
+- `DUCKDB_DEST=~/.local/bin ./install.sh` — change where the DuckDB CLI lands.
+
+`run.sh` resolves its DuckDB binary from `$DUCKDB`, the `--duckdb` flag, or the
+custom static-build path — so point it at the CLI the installer placed:
+
+```bash
+DUCKDB="./bin/duckdb" ./run.sh --output out/ reads.fastq.gz
+```
 
 ## Quick start
 
@@ -310,6 +351,39 @@ FROM 'output/variant_bins.parquet'
 GROUP BY cluster_id HAVING count(*) > 1
 ORDER BY n_variants DESC;
 ```
+
+## Operon annotation (optional)
+
+The per-molecule consensus operons can be annotated for rRNA genes (16S, 23S)
+and the intervening ITS tRNAs (tRNA-Ile / tRNA-Ala / tRNA-Glu) with
+[barrnap](https://github.com/tseemann/barrnap) — installed by `install.sh`
+into the `barrnap` conda env. This is a post-processing step, not part of the
+core pipeline.
+
+```bash
+conda run -n barrnap barrnap --kingdom bac --trna --fast \
+    out/consensus.fa > out/operons.gff
+```
+
+Pull the annotation back into Parquet with miint's GFF reader (`read_gff`
+parses the attributes column into a DuckDB `MAP`):
+
+```sql
+COPY (SELECT seqid AS bin_id, type, position, stop_position, strand,
+             attributes['Name'] AS feature
+      FROM read_gff('out/operons.gff'))
+  TO 'out/operon_annotations.parquet' (FORMAT PARQUET);
+```
+
+Notes:
+
+- We run barrnap in **`--fast`** mode for amplicon consensus; see the
+  [barrnap docs](https://github.com/tseemann/barrnap) for the speed/accuracy
+  trade-off.
+- **`--kingdom`** defaults to `bac`; for environmental samples with archaea,
+  also run `--kingdom arc` and merge the GFFs.
+- **tRNA** is nearly free and resolves the ITS operon type — annotate
+  `variants.fa` instead of `consensus.fa` to study per-copy ITS differences.
 
 ## Cleanup
 
